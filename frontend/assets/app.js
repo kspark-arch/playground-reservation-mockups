@@ -425,7 +425,7 @@
     document.getElementById("site-header").innerHTML = `
       <div class="shell header-inner">
         <a class="brand" href="#home" aria-label="연성대학교 운동장 예약 홈">
-          <span class="brand-mark"><img src="assets/brand/emblem-full.png" alt="연성대학교"></span>
+          <span class="brand-mark"><img src="/assets/brand/emblem-full.png" alt="연성대학교"></span>
           <span class="brand-text"><small>연성대학교</small><strong>운동장 예약</strong></span>
         </a>
         <nav class="main-nav" aria-label="주 메뉴">
