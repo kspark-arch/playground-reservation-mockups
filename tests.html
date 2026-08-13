@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>운동장 예약 시스템 자체 점검</title>
+  <link rel="stylesheet" href="assets/styles.css">
+  <script src="assets/app.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <div class="shell">
+      <p class="eyebrow">Browser self test</p>
+      <h1>운동장 예약 시스템 자체 점검</h1>
+      <p class="lead">로그인, 예약 신청, 관리자 승인과 핵심 정책을 실제 브라우저에서 점검합니다.</p>
+      <section class="card" style="margin-top:24px">
+        <div id="test-summary" class="notice"><span>…</span><p>테스트를 실행하고 있습니다.</p></div>
+        <div id="test-results" class="stack" style="margin-top:16px"></div>
+      </section>
+      <p class="small muted" style="margin-top:14px">테스트 전의 localStorage 데이터는 완료 후 원래 상태로 복원됩니다.</p>
+    </div>
+  </main>
+
+  <div hidden>
+    <header id="site-header"></header>
+    <div id="app"></div>
+    <div id="modal-root"></div>
+    <div id="toast-region"></div>
+  </div>
+
+  <script>
+    window.addEventListener("load", async function () {
+      const key = "groundReservationP0";
+      const backup = localStorage.getItem(key);
+      const results = [];
+      const wait = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
+      const check = (name, condition, detail = "") => {
+        results.push({ name, passed: Boolean(condition), detail });
+        if (!condition) throw new Error(name + (detail ? ": " + detail : ""));
+      };
+      const dateValue = (offset) => {
+        const date = new Date();
+        date.setHours(12, 0, 0, 0);
+        date.setDate(date.getDate() + offset);
+        return [
+          date.getFullYear(),
+          String(date.getMonth() + 1).padStart(2, "0"),
+          String(date.getDate()).padStart(2, "0")
+        ].join("-");
+      };
+      const submit = (form) => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+      try {
+        window.GroundReservationApp.reset();
+        let data = window.GroundReservationApp.getState();
+        check("초기 데이터 구조", data.users.length === 4 && data.fields.length === 4);
+        check("사용 장소 4종", ["운동장(전체)", "운동장(하프)", "농구코트(전체)", "농구코트(하프)"].every((name) => data.fields.some((field) => field.name === name)));
+        check("역할별 시연 계정", ["user", "operator", "admin"].every((role) => data.users.some((user) => user.role === role)));
+        check("localStorage 저장", JSON.parse(localStorage.getItem(key)).version === 1);
+        location.hash = "reviews";
+        await wait();
+        check("이용 후기 공간", Boolean(document.querySelector(".review-card")) && data.reviews.length === 1);
+
+        location.hash = "login";
+        await wait();
+        document.querySelector("#login-id").value = "20260001";
+        document.querySelector("#login-password").value = "1234";
+        submit(document.querySelector("#login-form"));
+        await wait();
+        data = window.GroundReservationApp.getState();
+        check("일반 사용자 로그인", data.session && data.session.userId === "user-student");
+
+        location.hash = "new?date=" + dateValue(2);
+        await wait();
+        const reservationForm = document.querySelector("#reservation-form");
+        const startOptions = Array.from(reservationForm.querySelector("[name=startTime]").options);
+        check("1~8교시 시작 시간", startOptions.length === 8 && startOptions[0].value === "09:30" && startOptions[7].value === "16:30" && startOptions[0].textContent.includes("1교시"));
+        reservationForm.querySelector("[name=startTime]").value = "16:30";
+        reservationForm.querySelector("[name=startTime]").dispatchEvent(new Event("change", { bubbles: true }));
+        await wait();
+        const endOptions = Array.from(reservationForm.querySelector("[name=endTime]").options);
+        check("종료 9·10교시 표시", endOptions.some((item) => item.value === "17:30" && item.textContent.includes("9교시")) && endOptions.some((item) => item.value === "18:30" && item.textContent.includes("10교시")));
+        reservationForm.querySelector("[name=startTime]").value = "09:30";
+        reservationForm.querySelector("[name=startTime]").dispatchEvent(new Event("change", { bubbles: true }));
+        await wait();
+        check("사용 장소 복수 선택", reservationForm.querySelectorAll("[name=fieldIds]").length === 4);
+        submit(reservationForm);
+        await wait();
+        check("누락 필수항목 위치 안내", reservationForm.querySelector(".location-picker").classList.contains("has-error"));
+        reservationForm.querySelector('[name=fieldIds][value="field-ground-full"]').checked = true;
+        reservationForm.querySelector('[name=fieldIds][value="field-ground-half"]').checked = true;
+        reservationForm.querySelector('[name=fieldIds][value="field-ground-half"]').dispatchEvent(new Event("change", { bubbles: true }));
+        await wait();
+        check("전체·하프 동시선택 제한", reservationForm.querySelector('[name=fieldIds][value="field-ground-full"]').checked !== reservationForm.querySelector('[name=fieldIds][value="field-ground-half"]').checked);
+        reservationForm.querySelector('[name=fieldIds][value="field-ground-full"]').checked = true;
+        reservationForm.querySelector('[name=fieldIds][value="field-ground-half"]').checked = false;
+        reservationForm.querySelector('[name=fieldIds][value="field-basketball-full"]').checked = true;
+        reservationForm.querySelector("[name=date]").value = dateValue(2);
+        reservationForm.querySelector("[name=startTime]").value = "09:30";
+        reservationForm.querySelector("[name=endTime]").value = "10:30";
+        reservationForm.querySelector("[name=groupName]").value = "자동 점검팀";
+        reservationForm.querySelector("[name=applicantName]").value = "김하늘";
+        reservationForm.querySelector("[name=contact]").value = "010-1111-2222";
+        reservationForm.querySelector("[name=purpose]").value = "예약 흐름 자동 점검";
+        reservationForm.querySelector("[name=participantCount]").value = "10";
+        reservationForm.querySelector("[name=agree]").checked = true;
+        submit(reservationForm);
+        await wait();
+        data = window.GroundReservationApp.getState();
+        const created = data.reservations.find((item) => item.groupName === "자동 점검팀");
+        check("예약 신청 및 승인 대기", created && created.status === "pending");
+        check("관리자 새 예약 알림", data.notifications.filter((item) => item.type === "reservation_submitted" && item.reservationId === created.id).length === 2);
+
+        const policyUser = data.users.find((user) => user.id === "user-student");
+        const overDuration = window.GroundReservationApp.validateReservation({
+          fieldIds: ["field-ground-full"],
+          date: dateValue(4), startTime: "09:30", endTime: "12:30",
+          groupName: "정책 테스트", applicantName: "김하늘", contact: "010-1111-2222",
+          purpose: "최대 시간", participantCount: 5
+        }, policyUser, created.id);
+        check("최대 2시간 정책", overDuration.some((message) => message.includes("2시간 이하")));
+
+        location.hash = "contact";
+        await wait();
+        document.querySelector("#user-message-body").value = "예약 승인 일정이 궁금합니다.";
+        submit(document.querySelector("#user-message-form"));
+        await wait();
+        data = window.GroundReservationApp.getState();
+        check("사용자 관리자 문의", data.messages.length === 1 && data.messages[0].userId === "user-student");
+
+        document.querySelector("[data-action=logout]").click();
+        await wait();
+        location.hash = "login";
+        await wait();
+        document.querySelector("#login-id").value = "operator";
+        document.querySelector("#login-password").value = "1234";
+        submit(document.querySelector("#login-form"));
+        await wait();
+        check("새 알림 숫자 배지", document.querySelector(".mobile-count") && document.querySelector(".mobile-count").textContent === "1");
+        location.hash = "notifications";
+        await wait();
+        location.hash = "admin-reservations";
+        await wait();
+        check("미처리 예약 알림 유지", document.querySelector(".mobile-count") && document.querySelector(".mobile-count").textContent === "1");
+        location.hash = "admin-messages";
+        await wait();
+        document.querySelector("#admin-message-body").value = "확인 후 승인 결과를 안내드리겠습니다.";
+        submit(document.querySelector("#admin-message-form"));
+        await wait();
+        data = window.GroundReservationApp.getState();
+        check("관리자 문의 답변", data.messages.length === 2 && data.messages[1].senderId === "user-operator");
+
+        location.hash = "admin-reservations";
+        await wait();
+        document.querySelector('[data-action=view-reservation][data-id="' + created.id + '"]').click();
+        await wait();
+        check("관리자 신청 상세 확인", document.querySelector(".reservation-detail-modal").textContent.includes("자동 점검팀") && document.querySelector(".reservation-detail-modal").textContent.includes("010-1111-2222"));
+        document.querySelector(".reservation-detail-modal [data-action=close-modal]").click();
+        document.querySelector('[data-action=approve][data-id="' + created.id + '"]').click();
+        await wait();
+        document.querySelector('[data-action=approve-confirmed]').click();
+        await wait();
+        data = window.GroundReservationApp.getState();
+        check("운영자 예약 승인", data.reservations.find((item) => item.id === created.id).status === "approved");
+        check("처리된 관리자 알림 종료", data.notifications.filter((item) => item.reservationId === created.id && item.type === "reservation_submitted").every((item) => item.resolved && item.read));
+        check("승인 후 알림 배지 제거", !document.querySelector(".mobile-count"));
+        const approvalNotice = data.notifications.find((item) => item.type === "reservation_approved" && item.reservationId === created.id);
+        check("승인 알림 문구 생성", approvalNotice && approvalNotice.body.includes(created.date) && approvalNotice.body.includes("운동장(전체)"));
+        check("작업 이력 기록", data.auditLogs.some((item) => item.entityId === created.id && item.action === "APPROVE"));
+        document.querySelector("[data-action=close-modal]").click();
+
+        location.hash = "admin-priority";
+        await wait();
+        const priorityForm = document.querySelector("#priority-form");
+        priorityForm.querySelector("[name=fieldId]").value = "field-ground-full";
+        priorityForm.querySelector("[name=title]").value = "자동 점검 우선 일정";
+        priorityForm.querySelector("[name=startDate]").value = dateValue(7);
+        priorityForm.querySelector("[name=endDate]").value = dateValue(7);
+        priorityForm.querySelector("[name=startTime]").value = "12:30";
+        priorityForm.querySelector("[name=endTime]").value = "13:30";
+        const weekday = new Date(dateValue(7) + "T12:00:00").getDay();
+        priorityForm.querySelector('[name=weekdays][value="' + weekday + '"]').checked = true;
+        submit(priorityForm);
+        await wait();
+        document.querySelector("[data-action=commit-priority]").click();
+        await wait();
+        data = window.GroundReservationApp.getState();
+        check("우선 배정 미리보기 및 등록", data.priorityBlocks.some((item) => item.title === "자동 점검 우선 일정"));
+
+        const conflict = window.GroundReservationApp.validateReservation({
+          fieldIds: [created.fieldIds[0]],
+          date: created.date, startTime: created.startTime, endTime: created.endTime,
+          groupName: "중복 테스트", applicantName: "박지훈", contact: "010-3333-4444",
+          purpose: "중복 차단", participantCount: 3
+        }, data.users.find((user) => user.id === "user-staff"), null);
+        check("승인 슬롯 중복 차단", conflict.some((message) => message.includes("이미 예약")));
+        const otherPlace = window.GroundReservationApp.validateReservation({
+          fieldIds: ["field-basketball-half"],
+          date: created.date, startTime: created.startTime, endTime: created.endTime,
+          groupName: "다른 장소 테스트", applicantName: "최관리", contact: "010-5555-6666",
+          purpose: "장소별 중복 분리", participantCount: 3
+        }, data.users.find((user) => user.id === "user-admin"), null);
+        check("장소별 예약 독립", !otherPlace.some((message) => message.includes("이미 예약")));
+        const exclusive = window.GroundReservationApp.validateReservation({
+          fieldIds: ["field-ground-full", "field-ground-half"],
+          date: dateValue(5), startTime: "09:30", endTime: "10:30",
+          groupName: "전체하프 테스트", applicantName: "박지훈", contact: "010-3333-4444",
+          purpose: "전체와 하프 동시 선택", participantCount: 3
+        }, data.users.find((user) => user.id === "user-staff"), null);
+        check("전체·하프 검증 차단", exclusive.some((message) => message.includes("전체와 하프")));
+      } catch (error) {
+        results.push({ name: "테스트 실행", passed: false, detail: error.message });
+      } finally {
+        if (backup === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, backup);
+      }
+
+      const passed = results.filter((item) => item.passed).length;
+      const failed = results.length - passed;
+      document.getElementById("test-summary").className = "notice " + (failed ? "notice-danger" : "");
+      document.getElementById("test-summary").innerHTML =
+        "<span>" + (failed ? "!" : "✓") + "</span><p><strong>" + passed + "개 통과</strong>" +
+        (failed ? ", " + failed + "개 실패" : " · 모든 점검을 통과했습니다.") + "</p>";
+      document.getElementById("test-results").innerHTML = results.map((item) =>
+        '<div class="preview-row' + (item.passed ? "" : " conflict") + '">' +
+        "<span>" + item.name + (item.detail ? " — " + item.detail : "") + "</span>" +
+        "<strong>" + (item.passed ? "통과" : "실패") + "</strong></div>"
+      ).join("");
+    });
+  </script>
+</body>
+</html>
