@@ -1,9 +1,0 @@
-{
-  "name": "serve",
-  "version": "14.2.4",
-  "private": true,
-  "type": "module",
-  "bin": {
-    "serve": "./bin.js"
-  }
-}
