@@ -1040,20 +1040,101 @@
       </div>`;
   }
 
+  function conflictOccupantSummary(occupant) {
+    if (!occupant || !occupant.item) {
+      return { kind: "unknown", id: "", title: "알 수 없는 점유", detail: "충돌 대상을 확인할 수 없습니다.", canView: false };
+    }
+    if (occupant.kind === "reservation") {
+      const item = occupant.item;
+      const applicant = state.users.find((user) => user.id === item.userId);
+      const fieldNames = state.fields
+        .filter((field) => reservationFieldIds(item).includes(field.id))
+        .map((field) => field.name)
+        .join(", ");
+      return {
+        kind: "reservation",
+        id: item.id,
+        title: item.groupName || "예약 신청",
+        detail: [
+          `${item.date} ${item.startTime}–${item.endTime}`,
+          fieldNames || "장소 미지정",
+          STATUS_LABELS[item.status] || item.status,
+          item.applicantName || (applicant ? applicant.name : "신청자 미확인"),
+          item.contact || ""
+        ].filter(Boolean).join(" · "),
+        canView: true
+      };
+    }
+    const item = occupant.item;
+    const field = state.fields.find((entry) => entry.id === item.fieldId);
+    return {
+      kind: "priority",
+      id: item.id,
+      title: item.title || "우선 배정",
+      detail: [
+        `${item.startTime}–${item.endTime}`,
+        field ? field.name : "장소 미지정",
+        BLOCK_LABELS[item.blockType] || item.blockType,
+        item.groupName || "담당 부서 미입력",
+        `${item.dates.length}일`
+      ].filter(Boolean).join(" · "),
+      canView: false
+    };
+  }
+
+  function renderPriorityConflictDetails(conflicts) {
+    const unique = [];
+    const seen = new Set();
+    conflicts.forEach((conflict) => {
+      const summary = conflictOccupantSummary(conflict.occupant);
+      const key = `${summary.kind}|${summary.id || summary.title}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      unique.push(summary);
+    });
+    if (!unique.length) return "";
+    return `
+      <div class="conflict-details">
+        ${unique.map((item) => `
+          <div class="conflict-detail">
+            <div>
+              <strong>${escapeHtml(item.kind === "reservation" ? "기존 예약" : "기존 우선 배정")} · ${escapeHtml(item.title)}</strong>
+              <p>${escapeHtml(item.detail)}</p>
+            </div>
+            ${item.canView ? `<button class="btn btn-secondary btn-sm" type="button" data-action="view-reservation" data-id="${item.id}">예약 상세</button>` : ""}
+          </div>
+        `).join("")}
+      </div>`;
+  }
+
   function renderPriority() {
     const user = currentUser();
     if (!isAdmin(user)) return renderForbidden("운영자만 우선 배정을 등록할 수 있습니다.");
     const preview = ui.priorityPreview;
+    const conflictCount = preview ? preview.conflicts.length : 0;
+    const uniqueConflictCount = preview
+      ? new Set(preview.conflicts.map((item) => {
+        const summary = conflictOccupantSummary(item.occupant);
+        return `${summary.kind}|${summary.id || summary.title}`;
+      })).size
+      : 0;
     const previewHtml = preview ? `
       <div class="divider"></div>
-      <div class="spread"><div><h3>등록 미리보기</h3><p class="muted small">${preview.candidates.length}일, ${preview.totalSlots}개 슬롯</p></div>${preview.conflicts.length ? statusBadge("rejected") : statusBadge("available")}</div>
+      <div class="spread"><div><h3>등록 미리보기</h3><p class="muted small">${preview.candidates.length}일, ${preview.totalSlots}개 슬롯${conflictCount ? ` · 충돌 ${uniqueConflictCount}건` : ""}</p></div>${conflictCount ? statusBadge("rejected") : statusBadge("available")}</div>
       <div class="preview-list">
         ${preview.candidates.map((date) => {
           const conflicts = preview.conflicts.filter((item) => item.date === date);
-          return `<div class="preview-row${conflicts.length ? " conflict" : ""}"><span>${date} (${WEEKDAYS[parseDate(date).getDay()]}) ${preview.input.startTime}–${preview.input.endTime}</span><strong>${conflicts.length ? `충돌 ${conflicts.length}건` : "등록 가능"}</strong></div>`;
+          return `
+            <div class="preview-row${conflicts.length ? " conflict" : ""}">
+              <div class="preview-row-head">
+                <span>${date} (${WEEKDAYS[parseDate(date).getDay()]}) ${preview.input.startTime}–${preview.input.endTime}</span>
+                <strong>${conflicts.length ? `충돌 ${conflicts.length}건` : "등록 가능"}</strong>
+              </div>
+              ${conflicts.length ? renderPriorityConflictDetails(conflicts) : ""}
+            </div>`;
         }).join("")}
       </div>
-      ${preview.conflicts.length ? `<div class="notice notice-danger" style="margin-top:14px"><span>!</span><p>기존 예약 또는 우선 배정과 충돌하여 등록할 수 없습니다.</p></div>` : `<button class="btn btn-primary btn-block" style="margin-top:14px" type="button" data-action="commit-priority">우선 배정 ${preview.totalSlots}개 슬롯 등록</button>`}
+      ${conflictCount ? `<div class="notice notice-danger" style="margin-top:14px"><span>!</span><p>아래 충돌 일정의 상세 내용을 확인한 뒤, 기존 예약을 조정하거나 우선 배정 일정을 변경해 주세요.</p></div>` : `<button class="btn btn-primary btn-block" style="margin-top:14px" type="button" data-action="commit-priority">우선 배정 ${preview.totalSlots}개 슬롯 등록</button>`}
     ` : "";
     const existing = [...state.priorityBlocks].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return `
@@ -1747,9 +1828,17 @@ ${item.applicantName || (applicant ? applicant.name : "신청자")}님, 예약�
     if (!candidates.length) return showAlert("일정이 없습니다", ["선택한 기간과 요일에 해당하는 날짜가 없습니다."]);
     const occupied = occupancyMap();
     const conflicts = [];
+    const seen = new Set();
     candidates.forEach((date) => {
       for (const key of timeSlotKeys(input.fieldId, date, input.startTime, input.endTime)) {
-        if (occupied.has(key)) conflicts.push({ date, startTime: key.split("|")[1], occupant: occupied.get(key) });
+        if (!occupied.has(key)) continue;
+        const occupant = occupied.get(key);
+        const parts = key.split("|");
+        const startTime = parts[2] || input.startTime;
+        const dedupeKey = `${date}|${occupant.kind}|${occupant.item && occupant.item.id ? occupant.item.id : startTime}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        conflicts.push({ date, startTime, occupant });
       }
     });
     ui.priorityPreview = { input, candidates, conflicts, totalSlots: candidates.length * ((endMinutes - startMinutes) / state.fields[0].slotMinutes) };
